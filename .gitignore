@@ -1,2 +1,5 @@
 .DS_Store
 node_modules/
+
+# Claude Code local settings (per-machine, not shared)
+.claude/settings.local.json

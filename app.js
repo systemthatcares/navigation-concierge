@@ -104,14 +104,25 @@ async function stage1Gates() {
 
   await agentSay("<b>Who needs coverage in your household?</b>");
   const hh = await ask([
-    { label: "Just me", value: { spouse: false, size: 1, kids: false } },
-    { label: "Me and my spouse/partner", value: { spouse: true, size: 2, kids: false } },
-    { label: "Me, spouse, and kids", value: { spouse: true, size: 4, kids: true } },
-    { label: "Me and my kids", value: { spouse: false, size: 3, kids: true } },
+    { label: "Just me", value: { spouse: false, kids: false } },
+    { label: "Me and my spouse/partner", value: { spouse: true, kids: false } },
+    { label: "Me, spouse, and kids", value: { spouse: true, kids: true } },
+    { label: "Me and my kids", value: { spouse: false, kids: true } },
   ]);
   profile.hasSpouse = hh.spouse;
-  profile.householdSize = hh.size;
   profile.hasKids = hh.kids;
+  // v0.2: count the children rather than assuming two. Household size sets the
+  // dollar threshold for every program now, so a wrong count moves a real cut line.
+  let nKids = 0;
+  if (hh.kids) {
+    await agentSay("<b>How many children need coverage?</b> This sets the income limit for every program, so the exact count matters.");
+    nKids = Math.max(1, await askNumber("e.g. 2", [
+      { label: "One", value: 1 },
+      { label: "Two", value: 2 },
+      { label: "Three", value: 3 },
+    ]));
+  }
+  profile.householdSize = 1 + (hh.spouse ? 1 : 0) + nKids;
 }
 
 async function stage2Gates() {

@@ -232,8 +232,14 @@ async function stage4Output() {
     '<span class="pill closed">' + esc(c.label) + '</span><div class="why">' + esc(c.reason) + "</div>").join("");
   const card1 = document.createElement("div");
   card1.className = "card";
+  // Unresolved paths render distinctly from closed ones. A door we could not
+  // check is not a door we ruled out, and showing them the same way is what let
+  // v0.1 present "go uninsured" as an exhaustive map.
+  const unresolvedRows = r.windowStatus.unresolved.map((u) =>
+    '<span class="pill unresolved">' + esc(u.label) + '</span><div class="why">' + esc(u.reason) + "</div>").join("");
   card1.innerHTML = "<h2>1 &middot; Window status, day " + r.windowStatus.day + "</h2>"
     + "<div>" + openPills + "</div>"
+    + (unresolvedRows ? '<div style="margin-top:10px">' + unresolvedRows + "</div>" : "")
     + (closedRows ? '<div style="margin-top:10px">' + closedRows + "</div>" : "");
   chat.appendChild(card1); scrollDown();
   await sleep(700);
@@ -260,9 +266,18 @@ async function stage4Output() {
   const cobraLine = r.cobraEstimate
     ? '<p class="why" style="margin-top:8px">Your estimated COBRA premium: $' + r.cobraEstimate.toLocaleString() + "/month (102% of the full premium you gave me).</p>"
     : "";
+  // Per-member determinations sit outside the single-path ranking: children
+  // qualify for Medi-Cal at a far higher income limit than adults, so a
+  // household is not always one plan.
+  const notes = r.householdNotes.length
+    ? '<div class="hh-notes"><h3>Also worth knowing</h3>'
+      + r.householdNotes.map((n) => '<div class="hh-note">' + esc(n) + "</div>").join("")
+      + "</div>"
+    : "";
+
   const card3 = document.createElement("div");
   card3.className = "card rec";
-  card3.innerHTML = "<h2>3 &middot; Recommended path</h2><h3>" + esc(r.recommended.label) + "</h3>"
+  card3.innerHTML = notes + "<h2>3 &middot; Recommended path</h2><h3>" + esc(r.recommended.label) + "</h3>"
     + '<p style="font-size:14.5px;line-height:1.55">' + esc(r.rationale) + "</p>" + cobraLine
     + '<h2 style="margin-top:16px">This week</h2>' + actions;
   chat.appendChild(card3); scrollDown();

@@ -11,8 +11,8 @@ const controls = document.getElementById("controls-inner");
 const profile = {
   daysSinceLoss: 0, state: "CA", hasSpouse: false, spouseBenefits: false,
   spousePlan60Day: false, careTier: "none", specialtyRx: false,
-  subsidyLikely: "no", newCoverageSoon: "no", totalPremium: null,
-  householdSize: 1,
+  newCoverageSoon: "no", totalPremium: null,
+  householdSize: 1, annualIncome: null, hasKids: false, pregnancyInHousehold: false,
 };
 
 // One early-exit offer per consult, and only when clinchCheck proves the
@@ -104,13 +104,14 @@ async function stage1Gates() {
 
   await agentSay("<b>Who needs coverage in your household?</b>");
   const hh = await ask([
-    { label: "Just me", value: { spouse: false, size: 1 } },
-    { label: "Me and my spouse/partner", value: { spouse: true, size: 2 } },
-    { label: "Me, spouse, and kids", value: { spouse: true, size: 4 } },
-    { label: "Me and my kids", value: { spouse: false, size: 3 } },
+    { label: "Just me", value: { spouse: false, size: 1, kids: false } },
+    { label: "Me and my spouse/partner", value: { spouse: true, size: 2, kids: false } },
+    { label: "Me, spouse, and kids", value: { spouse: true, size: 4, kids: true } },
+    { label: "Me and my kids", value: { spouse: false, size: 3, kids: true } },
   ]);
   profile.hasSpouse = hh.spouse;
   profile.householdSize = hh.size;
+  profile.hasKids = hh.kids;
 }
 
 async function stage2Gates() {
@@ -160,19 +161,26 @@ async function maybeOfferClinchExit(unansweredFields) {
 }
 
 async function stage3Ranking() {
-  await agentSay("<b>Roughly, what do you expect your household income to be over the next 12 months?</b> This decides whether marketplace subsidies change the math.");
-  const band = await ask([
-    { label: "Under $40k", value: "low" },
-    { label: "$40k to $75k", value: "mid" },
-    { label: "$75k to $150k", value: "high" },
-    { label: "Over $150k", value: "top" },
-    { label: "Not sure", value: "unsure" },
+  // v0.2: a number, not a band. Every program threshold is set against this and
+  // household size; the old bands could not tell a family of four at 115% FPL
+  // from a single person at 238%, and both answered "under $40k".
+  await agentSay("<b>Roughly what do you expect your whole household to earn over the next 12 months, before taxes?</b> An estimate is fine, and it is the single most important number here. Count everyone you named, and use what you expect going forward, not last year.");
+  profile.annualIncome = await askNumber("e.g. 60000", [
+    { label: "About $25k", value: 25000 },
+    { label: "About $60k", value: 60000 },
+    { label: "About $120k", value: 120000 },
   ]);
-  if (band === "low") profile.subsidyLikely = "yes";
-  else if (band === "mid") profile.subsidyLikely = profile.householdSize > 1 ? "yes" : "unsure";
-  else if (band === "high") profile.subsidyLikely = profile.householdSize > 2 ? "unsure" : "no";
-  else if (band === "top") profile.subsidyLikely = "no";
-  else profile.subsidyLikely = "unsure";
+
+  // Asked only when it can change the answer: pregnancy-related Medi-Cal runs
+  // to 213% FPL, so it matters only between the adult line and that one.
+  const eligNow = window.NavFpl.eligibility(profile);
+  const pregCouldMatter =
+    eligNow.adults === false &&
+    window.NavFpl.meetsMedical("medicalPregnancy", profile.annualIncome, profile.householdSize).met === true;
+  if (pregCouldMatter) {
+    await agentSay("<b>Is anyone in your household pregnant?</b> Pregnancy-related Medi-Cal has a much higher income limit than regular Medi-Cal and no enrollment deadline, so at this income it can change the answer.");
+    profile.pregnancyInHousehold = await ask(YN);
+  }
 
   if (await maybeOfferClinchExit(["specialtyRx", "newCoverageSoon"])) { exitedEarly = true; return; }
 
@@ -259,7 +267,7 @@ async function stage4Output() {
     : "That ranking used everything you told me. If any answer changes, run it again; the recommendation can flip.");
   await ask([{ label: "Start over", value: true, primary: true }]);
   chat.innerHTML = "";
-  Object.assign(profile, { daysSinceLoss: 0, state: "CA", hasSpouse: false, spouseBenefits: false, spousePlan60Day: false, careTier: "none", specialtyRx: false, subsidyLikely: "no", newCoverageSoon: "no", totalPremium: null, householdSize: 1 });
+  Object.assign(profile, { daysSinceLoss: 0, state: "CA", hasSpouse: false, spouseBenefits: false, spousePlan60Day: false, careTier: "none", specialtyRx: false, newCoverageSoon: "no", totalPremium: null, householdSize: 1, annualIncome: null, hasKids: false, pregnancyInHousehold: false });
   clinchOfferMade = false;
   exitedEarly = false;
   run();
@@ -268,7 +276,7 @@ async function stage4Output() {
 async function run() {
   await stage1Gates();
   await stage2Gates();
-  if (await maybeOfferClinchExit(["subsidyLikely", "specialtyRx", "newCoverageSoon"])) {
+  if (await maybeOfferClinchExit(["specialtyRx", "newCoverageSoon"])) {
     exitedEarly = true;
   } else {
     await stage3Ranking();

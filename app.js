@@ -11,8 +11,8 @@ const controls = document.getElementById("controls-inner");
 const profile = {
   daysSinceLoss: 0, state: "CA", hasSpouse: false, spouseBenefits: false,
   spousePlan60Day: false, careTier: "none", specialtyRx: false,
-  subsidyLikely: "no", newCoverageSoon: "no", totalPremium: null,
-  householdSize: 1,
+  newCoverageSoon: "no", totalPremium: null,
+  householdSize: 1, annualIncome: null, hasKids: false, pregnancyInHousehold: false,
 };
 
 // One early-exit offer per consult, and only when clinchCheck proves the
@@ -104,13 +104,25 @@ async function stage1Gates() {
 
   await agentSay("<b>Who needs coverage in your household?</b>");
   const hh = await ask([
-    { label: "Just me", value: { spouse: false, size: 1 } },
-    { label: "Me and my spouse/partner", value: { spouse: true, size: 2 } },
-    { label: "Me, spouse, and kids", value: { spouse: true, size: 4 } },
-    { label: "Me and my kids", value: { spouse: false, size: 3 } },
+    { label: "Just me", value: { spouse: false, kids: false } },
+    { label: "Me and my spouse/partner", value: { spouse: true, kids: false } },
+    { label: "Me, spouse, and kids", value: { spouse: true, kids: true } },
+    { label: "Me and my kids", value: { spouse: false, kids: true } },
   ]);
   profile.hasSpouse = hh.spouse;
-  profile.householdSize = hh.size;
+  profile.hasKids = hh.kids;
+  // v0.2: count the children rather than assuming two. Household size sets the
+  // dollar threshold for every program now, so a wrong count moves a real cut line.
+  let nKids = 0;
+  if (hh.kids) {
+    await agentSay("<b>How many children need coverage?</b> This sets the income limit for every program, so the exact count matters.");
+    nKids = Math.max(1, await askNumber("e.g. 2", [
+      { label: "One", value: 1 },
+      { label: "Two", value: 2 },
+      { label: "Three", value: 3 },
+    ]));
+  }
+  profile.householdSize = 1 + (hh.spouse ? 1 : 0) + nKids;
 }
 
 async function stage2Gates() {
@@ -160,19 +172,26 @@ async function maybeOfferClinchExit(unansweredFields) {
 }
 
 async function stage3Ranking() {
-  await agentSay("<b>Roughly, what do you expect your household income to be over the next 12 months?</b> This decides whether marketplace subsidies change the math.");
-  const band = await ask([
-    { label: "Under $40k", value: "low" },
-    { label: "$40k to $75k", value: "mid" },
-    { label: "$75k to $150k", value: "high" },
-    { label: "Over $150k", value: "top" },
-    { label: "Not sure", value: "unsure" },
+  // v0.2: a number, not a band. Every program threshold is set against this and
+  // household size; the old bands could not tell a family of four at 115% FPL
+  // from a single person at 238%, and both answered "under $40k".
+  await agentSay("<b>Roughly what do you expect your whole household to earn over the next 12 months, before taxes?</b> An estimate is fine, and it is the single most important number here. Count everyone you named, and use what you expect going forward, not last year.");
+  profile.annualIncome = await askNumber("e.g. 60000", [
+    { label: "About $25k", value: 25000 },
+    { label: "About $60k", value: 60000 },
+    { label: "About $120k", value: 120000 },
   ]);
-  if (band === "low") profile.subsidyLikely = "yes";
-  else if (band === "mid") profile.subsidyLikely = profile.householdSize > 1 ? "yes" : "unsure";
-  else if (band === "high") profile.subsidyLikely = profile.householdSize > 2 ? "unsure" : "no";
-  else if (band === "top") profile.subsidyLikely = "no";
-  else profile.subsidyLikely = "unsure";
+
+  // Asked only when it can change the answer: pregnancy-related Medi-Cal runs
+  // to 213% FPL, so it matters only between the adult line and that one.
+  const eligNow = window.NavFpl.eligibility(profile);
+  const pregCouldMatter =
+    eligNow.adults === false &&
+    window.NavFpl.meetsMedical("medicalPregnancy", profile.annualIncome, profile.householdSize).met === true;
+  if (pregCouldMatter) {
+    await agentSay("<b>Is anyone in your household pregnant?</b> Pregnancy-related Medi-Cal has a much higher income limit than regular Medi-Cal and no enrollment deadline, so at this income it can change the answer.");
+    profile.pregnancyInHousehold = await ask(YN);
+  }
 
   if (await maybeOfferClinchExit(["specialtyRx", "newCoverageSoon"])) { exitedEarly = true; return; }
 
@@ -213,8 +232,14 @@ async function stage4Output() {
     '<span class="pill closed">' + esc(c.label) + '</span><div class="why">' + esc(c.reason) + "</div>").join("");
   const card1 = document.createElement("div");
   card1.className = "card";
+  // Unresolved paths render distinctly from closed ones. A door we could not
+  // check is not a door we ruled out, and showing them the same way is what let
+  // v0.1 present "go uninsured" as an exhaustive map.
+  const unresolvedRows = r.windowStatus.unresolved.map((u) =>
+    '<span class="pill unresolved">' + esc(u.label) + '</span><div class="why">' + esc(u.reason) + "</div>").join("");
   card1.innerHTML = "<h2>1 &middot; Window status, day " + r.windowStatus.day + "</h2>"
     + "<div>" + openPills + "</div>"
+    + (unresolvedRows ? '<div style="margin-top:10px">' + unresolvedRows + "</div>" : "")
     + (closedRows ? '<div style="margin-top:10px">' + closedRows + "</div>" : "");
   chat.appendChild(card1); scrollDown();
   await sleep(700);
@@ -241,9 +266,18 @@ async function stage4Output() {
   const cobraLine = r.cobraEstimate
     ? '<p class="why" style="margin-top:8px">Your estimated COBRA premium: $' + r.cobraEstimate.toLocaleString() + "/month (102% of the full premium you gave me).</p>"
     : "";
+  // Per-member determinations sit outside the single-path ranking: children
+  // qualify for Medi-Cal at a far higher income limit than adults, so a
+  // household is not always one plan.
+  const notes = r.householdNotes.length
+    ? '<div class="hh-notes"><h3>Also worth knowing</h3>'
+      + r.householdNotes.map((n) => '<div class="hh-note">' + esc(n) + "</div>").join("")
+      + "</div>"
+    : "";
+
   const card3 = document.createElement("div");
   card3.className = "card rec";
-  card3.innerHTML = "<h2>3 &middot; Recommended path</h2><h3>" + esc(r.recommended.label) + "</h3>"
+  card3.innerHTML = notes + "<h2>3 &middot; Recommended path</h2><h3>" + esc(r.recommended.label) + "</h3>"
     + '<p style="font-size:14.5px;line-height:1.55">' + esc(r.rationale) + "</p>" + cobraLine
     + '<h2 style="margin-top:16px">This week</h2>' + actions;
   chat.appendChild(card3); scrollDown();
@@ -259,7 +293,7 @@ async function stage4Output() {
     : "That ranking used everything you told me. If any answer changes, run it again; the recommendation can flip.");
   await ask([{ label: "Start over", value: true, primary: true }]);
   chat.innerHTML = "";
-  Object.assign(profile, { daysSinceLoss: 0, state: "CA", hasSpouse: false, spouseBenefits: false, spousePlan60Day: false, careTier: "none", specialtyRx: false, subsidyLikely: "no", newCoverageSoon: "no", totalPremium: null, householdSize: 1 });
+  Object.assign(profile, { daysSinceLoss: 0, state: "CA", hasSpouse: false, spouseBenefits: false, spousePlan60Day: false, careTier: "none", specialtyRx: false, newCoverageSoon: "no", totalPremium: null, householdSize: 1, annualIncome: null, hasKids: false, pregnancyInHousehold: false });
   clinchOfferMade = false;
   exitedEarly = false;
   run();
@@ -268,7 +302,7 @@ async function stage4Output() {
 async function run() {
   await stage1Gates();
   await stage2Gates();
-  if (await maybeOfferClinchExit(["subsidyLikely", "specialtyRx", "newCoverageSoon"])) {
+  if (await maybeOfferClinchExit(["specialtyRx", "newCoverageSoon"])) {
     exitedEarly = true;
   } else {
     await stage3Ranking();

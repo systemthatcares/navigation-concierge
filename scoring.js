@@ -63,8 +63,20 @@ function timingTree(profile) {
   // Medi-Cal: no enrollment window at all. That is the whole point of it — the
   // 60-day clocks below are irrelevant to this path, which is exactly why its
   // absence from v0.1 was worst at day 61+, where it was the only door left.
+  // Outside California the program, the thresholds, and the portal are all
+  // different (HI/AK even use different federal poverty guidelines), so the
+  // consult does not assess it — unresolved, never silently closed, because
+  // every state's Medicaid stays open year-round while the user checks.
   const elig = Fpl.eligibility(profile);
-  if (elig.adults === true || elig.pregnancy === true) {
+  if (profile.state !== "CA") {
+    unresolved.push({
+      path: "medical",
+      reason:
+        "Medicaid outside California is not assessed by this consult; the math here covers " +
+        "Medi-Cal only. Your state's Medicaid program usually has no enrollment deadline, so " +
+        "it stays open while you check. Start at HealthCare.gov or your state's Medicaid agency.",
+    });
+  } else if (elig.adults === true || elig.pregnancy === true) {
     alive.push("medical");
   } else if (elig.adults === null) {
     unresolved.push({
@@ -139,9 +151,13 @@ function runScorecard(profile, alive) {
   const scores = {};
   const reasons = {};
   const verifyFlags = {};
+  const bareBaseline =
+    profile.state === "CA"
+      ? "last resort baseline (CA mandate penalty applies)"
+      : "last resort baseline";
   for (const p of alive) {
     scores[p] = p === "bare" ? -3 : 0;
-    reasons[p] = p === "bare" ? ["last resort baseline (CA mandate penalty applies)"] : [];
+    reasons[p] = p === "bare" ? [bareBaseline] : [];
     verifyFlags[p] = [];
   }
 
@@ -326,6 +342,27 @@ function householdNotes(profile) {
   const e = Fpl.eligibility(profile);
   const notes = [];
 
+  // Outside California no CA program name or tier applies, but two facts hold
+  // in every state and are too load-bearing to drop: children's Medicaid/CHIP
+  // limits run far above the adult ones, and pregnancy has its own higher
+  // limit. Stated generically, with nothing CA-specific claimed.
+  if (profile.state !== "CA") {
+    if (profile.hasKids) {
+      notes.push(
+        "In every state, children's Medicaid and CHIP income limits run much higher than the " +
+          "adult limits. Check coverage for your children regardless of what you do for " +
+          "yourself; it has no enrollment deadline."
+      );
+    }
+    if (profile.pregnancyInHousehold) {
+      notes.push(
+        "Pregnancy-related Medicaid has its own, higher income limit in every state and is " +
+          "open year-round. Worth confirming before electing anything with a premium."
+      );
+    }
+    return notes;
+  }
+
   if (e.kids === "free") {
     notes.push(
       "Your children very likely qualify for Medi-Cal on their own, at no cost. The limit for children is much higher than for adults. This holds whichever path you choose for yourself, and it has no enrollment deadline."
@@ -391,7 +428,13 @@ function nextActions(profile, recommendedPath) {
       }
       break;
     case "aca":
-      a.push("Create an account at CoveredCA.com and apply within your special enrollment window (" + acaDaysLeft + " days left).");
+      a.push(
+        "Create an account at " +
+          (profile.state === "CA" ? "CoveredCA.com" : "HealthCare.gov (or your state's marketplace)") +
+          " and apply within your special enrollment window (" +
+          acaDaysLeft +
+          " days left)."
+      );
       a.push("Have proof of coverage loss ready: your termination letter or the COBRA notice itself works.");
       a.push("Enter your projected 12-month income carefully, since subsidies key off it, and compare silver-tier plans first.");
       if (profile.specialtyRx) {
@@ -406,9 +449,17 @@ function nextActions(profile, recommendedPath) {
     case "bare":
       // Every timed door is shut here, which makes this the case where a missing
       // always-open path did the most damage in v0.1. Medi-Cal leads the list.
-      a.push("Check Medi-Cal first, before you accept being uninsured. It has no enrollment deadline, so unlike everything else here it is still open today. Apply at CoveredCA.com or your county social services office.");
+      if (profile.state === "CA") {
+        a.push("Check Medi-Cal first, before you accept being uninsured. It has no enrollment deadline, so unlike everything else here it is still open today. Apply at CoveredCA.com or your county social services office.");
+      } else {
+        a.push("Check your state's Medicaid program first, before you accept being uninsured. It has no enrollment deadline, so unlike everything else here it is still open today. Start at HealthCare.gov or your state's Medicaid agency.");
+      }
       a.push("Mark the next ACA Open Enrollment date (November 1) on your calendar now. That is your next guaranteed on-ramp.");
-      a.push("California has a state individual mandate, so expect a penalty at tax time. Check the current year's amount on the FTB site.");
+      if (profile.state === "CA") {
+        a.push("California has a state individual mandate, so expect a penalty at tax time. Check the current year's amount on the FTB site.");
+      } else {
+        a.push("There is no federal penalty for going uninsured, but one hospitalization can be financially catastrophic. Treat a coverage gap as a bridge, not a plan.");
+      }
       a.push("For care in the gap: community health centers bill on a sliding scale, and GoodRx-style pricing covers many generic prescriptions.");
       break;
   }
@@ -435,19 +486,34 @@ function recommend(profile) {
       closed: tree.closed.map((c) => ({ label: PATHS[c.path], reason: c.reason })),
       // Never fold these into `closed`. A path we could not evaluate is not a
       // path we ruled out, and the difference is the whole bug this release fixes.
-      unresolved: tree.unresolved.map((u) => ({ label: PATHS[u.path], reason: u.reason })),
+      // Outside CA the unassessed path is the user's own state's Medicaid, so it
+      // must not carry California's program name.
+      unresolved: tree.unresolved.map((u) => ({
+        label:
+          u.path === "medical" && profile.state !== "CA"
+            ? "Medicaid (your state's program)"
+            : PATHS[u.path],
+        reason: u.reason,
+      })),
     },
     ranked,
     recommended: { path: recommended, label: PATHS[recommended] },
     rationale,
     actions: nextActions(profile, recommended),
     householdNotes: householdNotes(profile),
+    // Outside CA the Medi-Cal determinations are meaningless (different
+    // programs, thresholds, and for HI/AK different FPL tables), so they are
+    // nulled rather than reported. The subsidy trilean stays: the ACA subsidy
+    // structure is federal and the band heuristic is already disclosed as rough.
     eligibility: {
       incomeKnown: elig.known,
-      fplPercent: elig.fplPercentMedical === null ? null : Math.round(elig.fplPercentMedical),
-      medicalAdults: elig.adults,
-      medicalPregnancy: elig.pregnancy,
-      medicalKids: elig.kids,
+      fplPercent:
+        profile.state !== "CA" || elig.fplPercentMedical === null
+          ? null
+          : Math.round(elig.fplPercentMedical),
+      medicalAdults: profile.state === "CA" ? elig.adults : null,
+      medicalPregnancy: profile.state === "CA" ? elig.pregnancy : null,
+      medicalKids: profile.state === "CA" ? elig.kids : null,
       subsidy: elig.subsidy,
     },
     cobraEstimate: profile.totalPremium ? Math.round(profile.totalPremium * 1.02) : null,

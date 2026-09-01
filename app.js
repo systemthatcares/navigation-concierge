@@ -49,7 +49,10 @@ function ask(options) {
       const b = document.createElement("button");
       b.className = "chip" + (opt.primary ? " primary" : "");
       b.textContent = opt.label;
-      b.onclick = () => { controls.innerHTML = ""; userSay(opt.label); resolve(opt.value); };
+      b.onclick = () => {
+        if (opt.href) { window.open(opt.href, "_blank", "noopener"); return; }
+        controls.innerHTML = ""; userSay(opt.label); resolve(opt.value);
+      };
       controls.appendChild(b);
     }
     scrollDown();
@@ -86,6 +89,8 @@ const YN = [ { label: "Yes", value: true }, { label: "No", value: false } ];
 
 async function stage1Gates() {
   await agentSay("Hi, I'm your coverage navigator. You answer a few questions, I map which paths are still open to you and which one fits your situation best. Takes about two minutes.");
+  // Entrance disclaimer (ruled 2026-08-31, wording signed off 2026-09-01).
+  await agentSay("One note before we start: this is educational information from a physician, not medical, legal, or insurance advice, and it does not sell or enroll you in anything. Your answers stay on your device. Nothing is stored or sent anywhere.", "note");
   await agentSay("<b>First: about how many days ago did your employer coverage end?</b> A rough number is fine.");
   profile.daysSinceLoss = await askNumber("days ago", [
     { label: "About a week", value: 7 },
@@ -99,7 +104,7 @@ async function stage1Gates() {
     { label: "Another state", value: "OTHER" },
   ]);
   if (profile.state !== "CA") {
-    await agentSay("This prototype is tuned for California, but the core logic still applies. One difference: short-term plans may be available in your state, so I'll keep that option on the table.", "note");
+    await agentSay("This consult is built for California. The enrollment-window rules apply everywhere, but the Medicaid and subsidy math is California-only, so outside California I will point you to your state's programs rather than guess. One difference: short-term plans may be available in your state, so I'll keep that option on the table.", "note");
   }
 
   await agentSay("<b>Who needs coverage in your household?</b>");
@@ -285,13 +290,18 @@ async function stage4Output() {
 
   const disc = document.createElement("footer");
   disc.className = "disclaimer";
-  disc.textContent = "Prototype for demonstration. Educational information, not insurance, legal, or medical advice. Verify windows and premiums with your plan documents.";
+  disc.textContent = "Educational information from a physician, not insurance, legal, or medical advice. Nothing you entered was stored or sent anywhere. Verify windows and premiums against your plan documents and your COBRA notice.";
   chat.appendChild(disc);
 
   await agentSay(exitedEarly
     ? "I stopped early because the remaining questions couldn't change this answer, only the fine print. The math clinched it."
     : "That ranking used everything you told me. If any answer changes, run it again; the recommendation can flip.");
-  await ask([{ label: "Start over", value: true, primary: true }]);
+  // Guide offer after the recommendation, never before it (D1, ruled 2026-08-23).
+  await agentSay("Want the full written version? The free guide covers every path here in detail, including the retroactive-COBRA strategy and the notice-date rule. It's one email, no follow-ups.");
+  await ask([
+    { label: "Get the free guide", value: "guide", primary: true, href: "https://systemthatcares.com" },
+    { label: "Start over", value: "restart" },
+  ]);
   chat.innerHTML = "";
   Object.assign(profile, { daysSinceLoss: 0, state: "CA", hasSpouse: false, spouseBenefits: false, spousePlan60Day: false, careTier: "none", specialtyRx: false, newCoverageSoon: "no", totalPremium: null, householdSize: 1, annualIncome: null, hasKids: false, pregnancyInHousehold: false });
   clinchOfferMade = false;

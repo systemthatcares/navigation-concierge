@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Navigation Concierge</title>
+<title>Navigation Concierge | System That Cares</title>
 <style>
   :root {
     --ink: #17303b;
@@ -30,6 +30,8 @@
   }
   header h1 { font-size: 19px; font-weight: 650; color: var(--teal-dark); letter-spacing: 0.2px; }
   header p { font-size: 13px; color: var(--ink-soft); margin-top: 3px; }
+  header p.byline { font-size: 12.5px; margin-top: 5px; }
+  header p.byline a { color: var(--teal-dark); }
   #chat-wrap { width: 100%; max-width: 640px; flex: 1; display: flex; flex-direction: column; padding: 18px 14px 120px; }
   .msg { max-width: 86%; margin: 6px 0; padding: 11px 15px; border-radius: var(--radius); font-size: 15px; line-height: 1.55; animation: rise .25s ease; }
   .agent { background: var(--card); border: 1px solid var(--line); align-self: flex-start; border-bottom-left-radius: 4px; }
@@ -87,12 +89,13 @@
 <header>
   <h1>Navigation Concierge</h1>
   <p>Lost employer health coverage? Get an unbiased read on your options. No commissions, no sales.</p>
+  <p class="byline">From Matthew Ton-That, MD, MBA, MPH &middot; the free guide lives at <a href="https://systemthatcares.com">systemthatcares.com</a></p>
 </header>
 <div id="chat-wrap"></div>
 <div id="controls"><div id="controls-inner"></div></div>
 <!-- bump ?v= on every script change: python http.server sends no cache headers, so browsers heuristically cache -->
 <script src="fpl.js?v=0.2.0"></script>
-<script src="scoring.js?v=0.2.1"></script>
-<script src="app.js?v=0.2.1"></script>
+<script src="scoring.js?v=0.3.0"></script>
+<script src="app.js?v=0.3.0"></script>
 </body>
 </html>

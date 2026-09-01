@@ -101,7 +101,7 @@ function timingTree(profile) {
 
   // COBRA: 60 days from loss (or notice, whichever later). Election retroactive.
   if (d <= 60) alive.push("cobra");
-  else closed.push({ path: "cobra", reason: "60-day COBRA election window has passed (day " + d + ")" });
+  else closed.push({ path: "cobra", reason: "60-day COBRA election window has likely passed (day " + d + " from coverage loss). The clock runs from the later of your coverage-loss date and the date your COBRA notice was sent, so check the date on the notice before you treat this door as shut" });
 
   // ACA SEP: 60 days from loss.
   if (d <= 60) alive.push("aca");
@@ -184,7 +184,7 @@ function runScorecard(profile, alive) {
   if (elig.adults === true || elig.pregnancy === true) {
     add("medical", 3, "no premium, no enrollment deadline, and comprehensive benefits including prescriptions");
     add("cobra", -3, "at this income, 102% of the full group premium is not payable");
-    add("aca", -1, "a subsidized marketplace plan still carries a premium and cost-sharing; Medi-Cal does not");
+    add("aca", -1, "at this income you qualify for Medi-Cal, so marketplace subsidies do not apply; a marketplace plan would be full price plus cost-sharing");
   }
 
   // Row 1: spouse benefits + SEP open → spouse is default winner
@@ -475,7 +475,7 @@ function recommend(profile) {
   const recommended = ranked[0].path;
   const rationale = ranked[0].reasons.length
     ? "Top-ranked after scoring your situation: " + ranked[0].reasons.join("; ") + "."
-    : "Top-ranked for your situation with no strong compressor pushing another way.";
+    : "Top-ranked for your situation; nothing in your answers pushed strongly toward another path.";
 
   const elig = Fpl.eligibility(profile);
 
